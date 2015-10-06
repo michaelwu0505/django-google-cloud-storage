@@ -3,12 +3,14 @@ Google Cloud Storage file backend for Django
 """
 
 import os
+from datetime import datetime
 import mimetypes
 from django.conf import settings
 from django.core.files.storage import Storage
 from google.appengine.api.blobstore import create_gs_key
 import cloudstorage as gcs
-
+import sys
+import StringIO
 __author__ = "ckopanos@redmob.gr, me@rchrd.net"
 __license__ = "GNU GENERAL PUBLIC LICENSE"
 
@@ -43,7 +45,6 @@ class GoogleCloudStorage(Storage):
 
     def _save(self, name, content):
         filename = self.location + "/" + name
-        filename = os.path.normpath(filename)
         type, encoding = mimetypes.guess_type(name)
         cache_control = settings.GOOGLE_CLOUD_STORAGE_DEFAULT_CACHE_CONTROL
 
@@ -79,25 +80,27 @@ class GoogleCloudStorage(Storage):
             return False
 
     def listdir(self, path=None):
-        directories, files = [], []
-        bucketContents = gcs.listbucket(self.location, prefix=path)
-        for entry in bucketContents:
-            filePath = entry.filename
-            head, tail = os.path.split(filePath)
-            subPath = os.path.join(self.location, path)
-            head = head.replace(subPath, '', 1)
-            if head == "":
-                head = None
-            if not head and tail:
-                files.append(tail)
-            if head:
-                if not head.startswith("/"):
-                    head = "/" + head
-                dir = head.split("/")[1]
-                if not dir in directories:
-                    directories.append(dir)
-        return directories, files
+        if path != "":
+            path_prefix=self.location+"/"+path+"/"
+        else:
+            path_prefix=self.location+"/"
+        bucketContents = gcs.listbucket(path_prefix=path_prefix, delimiter="/")
 
+        directories, files = [], []
+        for entry in bucketContents:
+            if entry.filename == path_prefix:
+                continue
+
+            head, tail = os.path.split(entry.filename)
+            if entry.is_dir:
+                head, tail = os.path.split(os.path.normpath(entry.filename))
+                directories.append(tail)
+            else:
+                head, tail = os.path.split(entry.filename)
+                files.append(tail)
+
+        return directories, files
+                
     def size(self, name):
         stats = self.statFile(name)
         return stats.st_size
@@ -107,7 +110,7 @@ class GoogleCloudStorage(Storage):
 
     def created_time(self, name):
         stats = self.statFile(name)
-        return stats.st_ctime
+        return datetime.fromtimestamp(stats.st_ctime)
 
     def modified_time(self, name):
         return self.created_time(name)
@@ -118,7 +121,11 @@ class GoogleCloudStorage(Storage):
             # we need this in order to display images, links to files, etc
             # from the local appengine server
             filename = "/gs" + self.location + "/" + name
+            print "!!!!!!!!"
+            print name
+            print filename
             key = create_gs_key(filename)
+            print key
             local_base_url = getattr(settings, "GOOGLE_CLOUD_STORAGE_DEV_URL",
                                      "http://localhost:8001/blobstore/blob/")
             return local_base_url + key + "?display=inline"
@@ -127,3 +134,56 @@ class GoogleCloudStorage(Storage):
     def statFile(self, name):
         filename = self.location + "/" + name
         return gcs.stat(filename)
+
+    def isdir(self, name):
+        if name=="":
+            return True
+
+        if name!="":
+            path_prefix = self.location + "/" + name + "/"
+        else:
+            path_prefix = self.location + "/"
+
+        bucketContents = gcs.listbucket(path_prefix=path_prefix)
+        for entry in bucketContents:
+            return True
+
+        return False
+
+    def isfile(self, name):
+        if self.exists(name):
+            return True
+        else:
+            return False
+
+    def makedirs(self, path):
+        sio = StringIO.StringIO("")
+        self._save(path+"/", sio)
+
+    def rmtree(self, path):
+        if path != "":
+            path_prefix=self.location+"/"+path+"/"
+        else:
+            path_prefix=self.location+"/"
+        bucketContents = gcs.listbucket(path_prefix=path_prefix)
+
+        for entry in bucketContents:
+            gcs.delete(entry.filename)
+
+    def move(self, old_file_name, new_file_name, allow_overwrite=False):
+
+        if self.isdir(old_file_name):
+            raise Exception("Rename of directory '%s' is not supported." % old_file_name)
+
+        if self.exists(new_file_name):
+            if allow_overwrite:
+                self.delete(new_file_name)
+            else:
+                raise Exception("The destination file '%s' exists and allow_overwrite is False" % new_file_name)
+
+        gcs.copy2(self.location + "/" + old_file_name, self.location + "/" + new_file_name)
+
+        gcs.delete(self.location + "/" + old_file_name)
+
+    def path(self, name):
+        return None
