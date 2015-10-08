@@ -63,6 +63,7 @@ class GoogleCloudStorage(Storage):
         except:
             pass
         gss_file.close()
+
         return name
 
     def delete(self, name):
@@ -121,11 +122,7 @@ class GoogleCloudStorage(Storage):
             # we need this in order to display images, links to files, etc
             # from the local appengine server
             filename = "/gs" + self.location + "/" + name
-            print "!!!!!!!!"
-            print name
-            print filename
             key = create_gs_key(filename)
-            print key
             local_base_url = getattr(settings, "GOOGLE_CLOUD_STORAGE_DEV_URL",
                                      "http://localhost:8001/blobstore/blob/")
             return local_base_url + key + "?display=inline"
@@ -181,9 +178,12 @@ class GoogleCloudStorage(Storage):
             else:
                 raise Exception("The destination file '%s' exists and allow_overwrite is False" % new_file_name)
 
-        gcs.copy2(self.location + "/" + old_file_name, self.location + "/" + new_file_name)
+        #FIXME: There seems to be a bug in copy2? The data in __BlobInfo__ is NOT copied...
+        #gcs.copy2(self.location + "/" + old_file_name, self.location + "/" + new_file_name)
+        old_file = self._open(old_file_name)
+        self._save(new_file_name, old_file)
 
-        gcs.delete(self.location + "/" + old_file_name)
+        self.delete(old_file_name)
 
     def path(self, name):
         return None
